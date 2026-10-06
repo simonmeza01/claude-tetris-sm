@@ -1,0 +1,78 @@
+name: Claude Issue Triage
+
+on:
+  issues:
+    types: [opened, edited]
+
+concurrency:
+  group: claude-issue-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Triage
+        id: claude-triage
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are triaging issue #${{ github.event.issue.number }} in ${{ github.repository }}
+            (event: issues.${{ github.event.action }}).
+
+            Step 1 - Idempotency guard:
+            Run `gh issue view ${{ github.event.issue.number }} --json labels,comments` and inspect
+            the result. If this event is an "edited" event (not "opened") AND the issue already has
+            at least one label from the list below AND there is already a comment on the issue that
+            looks like a prior triage diagnosis, STOP HERE and make no further changes. Do not
+            re-label or re-comment on every edit.
+
+            Step 2 - Read the issue:
+            Read the issue title and body from the event context. You may also run
+            `gh issue view ${{ github.event.issue.number }}` to re-fetch the latest content.
+
+            Step 3 - Choose labels:
+            Choose zero or more of the following EXISTING labels that apply. Do NOT invent or
+            create any new label - only use labels from this exact list:
+              bug, enhancement, documentation, question, duplicate, wontfix, help wanted,
+              good first issue, accessibility, invalid
+            Apply your chosen labels with:
+              gh issue edit ${{ github.event.issue.number }} --add-label "<label1>,<label2>"
+            If no label clearly applies, skip this step rather than forcing one.
+
+            Step 4 - Diagnose and comment:
+            This repo is a vanilla JS Tetris game (no build, no tests, no framework). Read
+            CLAUDE.md, game.js, index.html, and style.css as needed to ground your diagnosis in
+            the real code. Key sync points to check when relevant:
+              - COLS, ROWS, BLOCK in game.js must match the #board width/height in index.html
+                (COLS*BLOCK x ROWS*BLOCK).
+              - Board cells hold 0 (empty) or a 1-7 index into COLORS; PIECES entries use the
+                same indices - mismatches here are a common bug source.
+              - Scoring: LINE_SCORES x level; hard drop +2/cell, soft drop +1/row; level rises
+                every 10 lines; fall speed is max(100, 1000 - (level-1)*90) ms (dropInterval).
+              - Rotation is rotateCW (transpose + reverse) with wall kicks of +-1/+-2 columns in
+                tryRotate.
+            Post ONE comment via:
+              gh issue comment ${{ github.event.issue.number }} --body "<comment>"
+            The comment must state, in plain language:
+              1. A likely root cause / general technical diagnosis of what's being reported.
+              2. Which file(s)/area are implicated (game.js logic, index.html markup/canvas
+                 sizing, or style.css), naming the relevant function or constant where you can
+                 tell.
+            Do NOT propose or write actual code diffs, do NOT create branches or pull requests,
+            and do NOT modify any file other than via the gh commands above for labels/comments.
+
+          claude_args: '--allowedTools "Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh issue view:*)"'
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://code.claude.com/docs/en/cli-reference for available options
